@@ -48,7 +48,9 @@ class TestRunView:
 
     def test_settings_carry_a_usable_weight(self):
         settings = Settings(db_path=Path("runfuel.db"), weight_kg=70.0)
-        run = Run(id=2, run_date=date(2026, 8, 27), distance_km=5.0, duration_seconds=1500)
+        run = Run(
+            id=2, run_date=date(2026, 8, 27), distance_km=5.0, duration_seconds=1500
+        )
 
         view = RunView.from_run(run, weight_kg=settings.weight_kg)
 
@@ -56,7 +58,9 @@ class TestRunView:
         assert round(view.calories, 4) == 321.5625
 
 
-def _view(run_date: date, distance_km: float, duration_seconds: int, felt=None) -> RunView:
+def _view(
+    run_date: date, distance_km: float, duration_seconds: int, felt=None
+) -> RunView:
     return RunView.from_run(
         Run(
             id=None,
