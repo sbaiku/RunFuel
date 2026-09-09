@@ -14,6 +14,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "httpx2>=2.12",
+    "ruff==0.16.6",
+    "mypy==2.3.1",
 ]
 
 [build-system]
@@ -26,3 +28,15 @@ packages = ["src/runfuel"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error"]
+
+[tool.ruff]
+# docs/ holds the design spec and the implementation plan: historical records of
+# what was decided and executed. Ruff formats Python blocks inside Markdown, so
+# without this it rewrites those snippets and they stop matching what was built.
+exclude = ["docs"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection *requires* these calls in argument defaults --
+# it is the documented idiom, not an accident. Naming them here keeps B008
+# active everywhere else rather than switching the rule off wholesale.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form"]

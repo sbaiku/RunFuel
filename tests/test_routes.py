@@ -17,7 +17,10 @@ class TestIndex:
 
     def test_concurrent_requests_all_succeed(self, client):
         with ThreadPoolExecutor(8) as ex:
-            codes = [f.result().status_code for f in [ex.submit(client.get, "/") for _ in range(40)]]
+            codes = [
+                f.result().status_code
+                for f in [ex.submit(client.get, "/") for _ in range(40)]
+            ]
         assert set(codes) == {200}
 
     def test_building_the_app_creates_no_database(self, settings):
@@ -55,7 +58,11 @@ class TestLoggingARun:
     def test_malformed_duration_returns_400_and_writes_nothing(self, client, conn):
         response = client.post(
             "/runs",
-            data={"run_date": "2026-08-27", "distance_km": "10", "duration": "nonsense"},
+            data={
+                "run_date": "2026-08-27",
+                "distance_km": "10",
+                "duration": "nonsense",
+            },
         )
 
         assert response.status_code == 400
@@ -72,10 +79,16 @@ class TestLoggingARun:
         assert db.list_runs(conn) == []
 
     @pytest.mark.parametrize("distance", ["inf", "1e309", "nan"])
-    def test_non_finite_distance_returns_400_and_writes_nothing(self, client, conn, distance):
+    def test_non_finite_distance_returns_400_and_writes_nothing(
+        self, client, conn, distance
+    ):
         response = client.post(
             "/runs",
-            data={"run_date": "2026-08-27", "distance_km": distance, "duration": "50:00"},
+            data={
+                "run_date": "2026-08-27",
+                "distance_km": distance,
+                "duration": "50:00",
+            },
         )
 
         assert response.status_code == 400
@@ -115,7 +128,11 @@ class TestWeight:
         with TestClient(app) as heavy_client:
             heavy_client.post(
                 "/runs",
-                data={"run_date": "2026-08-27", "distance_km": "10", "duration": "50:00"},
+                data={
+                    "run_date": "2026-08-27",
+                    "distance_km": "10",
+                    "duration": "50:00",
+                },
             )
 
             body = heavy_client.get("/").text
@@ -141,7 +158,7 @@ class TestOrdering:
         body = client.get("/").text
         # Scope the search to the table body so a form field's value can
         # never satisfy the assertion in place of an actual table row.
-        rows = body[body.index("<tbody>"):]
+        rows = body[body.index("<tbody>") :]
 
         assert rows.index("2020-06-01") < rows.index("2020-01-01")
 
@@ -210,7 +227,9 @@ class TestFeltRating:
         assert '<td class="numeric felt">&mdash;</td>' in client.get("/").text
 
     @pytest.mark.parametrize("felt", ["0", "6", "9", "great"])
-    def test_an_out_of_range_rating_is_rejected_and_writes_nothing(self, client, conn, felt):
+    def test_an_out_of_range_rating_is_rejected_and_writes_nothing(
+        self, client, conn, felt
+    ):
         response = _log(client, felt=felt)
 
         assert response.status_code == 400

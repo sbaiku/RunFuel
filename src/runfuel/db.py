@@ -40,7 +40,7 @@ def init_db(connection: sqlite3.Connection) -> None:
 # column. Adding them here keeps existing logs working without a migration tool.
 _ADDED_COLUMNS = {
     "felt": "ALTER TABLE runs ADD COLUMN felt INTEGER"
-            " CHECK (felt IS NULL OR felt BETWEEN 1 AND 5)",
+    " CHECK (felt IS NULL OR felt BETWEEN 1 AND 5)",
 }
 
 
@@ -65,7 +65,10 @@ def add_run(
         (run_date.isoformat(), distance_km, duration_seconds, felt),
     )
     connection.commit()
-    return int(cursor.lastrowid)
+    run_id = cursor.lastrowid
+    if run_id is None:  # sqlite always sets this after an INSERT; be explicit
+        raise RuntimeError("insert did not produce a row id")
+    return run_id
 
 
 def list_runs(connection: sqlite3.Connection) -> list[Run]:

@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    # This step checks out a copy of your repository.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+    # This step sets up Python 3.13 using the astral-sh/setup-uv action.
+      - name: Setup uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+    # This step installs the dependencies defined in your pyproject.toml file.
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Tests
+        run: uv run pytest --maxfail=1 --disable-warnings -q --cov=src --cov-fail-under=80
+
+
+  docker-build:
+    runs-on: ubuntu-latest
+    # Don't spend runner minutes building an image for a commit whose tests fail.
+    needs: quality
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # - name: Login to GHCR
+      #   if: github.event_name == 'push'
+      #   uses: docker/login-action@v4
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: runfuel:test
+          # To publish later, add the GHCR login step above and swap to:
+          # push: ${{ github.event_name == 'push' }}
+          # tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      # A build proving the image compiles says nothing about whether it runs.
+      # This catches a broken CMD, a missing runtime dep, or an unwritable /data.
+      - name: Smoke test the container
+        run: |
+          docker run -d --name runfuel-ci -p 8000:8000 runfuel:test
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/health; then
+              echo "container is healthy"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became healthy"
+          docker logs runfuel-ci
+          exit 1
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs runfuel-ci || true

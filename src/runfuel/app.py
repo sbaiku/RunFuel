@@ -55,8 +55,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             connection.close()
 
-    def _render(request: Request, connection, *, error: str | None = None,
-                form: dict | None = None, status_code: int = 200):
+    def _render(
+        request: Request,
+        connection,
+        *,
+        error: str | None = None,
+        form: dict | None = None,
+        status_code: int = 200,
+    ):
         views = [
             RunView.from_run(run, settings.weight_kg)
             for run in db.list_runs(connection)
@@ -71,7 +77,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "totals": _totals(views),
                 "error": error,
                 "form": form or {},
-                "today": date.today().isoformat(),
+                "today": date.today().isoformat(),  # noqa: DTZ011 - a local log wants
+                # the runner's own day, not UTC; a naive date is correct here.
                 "weight_kg": settings.weight_kg,
             },
             status_code=status_code,
@@ -95,7 +102,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 connection.execute("SELECT 1 FROM runs LIMIT 1")
             finally:
                 connection.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a health check must report any
+            # failure to reach storage, not just the ones we thought of.
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return {"status": "ok"}
 

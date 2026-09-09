@@ -53,7 +53,9 @@ def format_duration(seconds: int) -> str:
 
 def validate_run(distance_km: float, duration_s: int) -> None:
     if not math.isfinite(distance_km) or distance_km <= 0:
-        raise ValueError(f"distance must be a finite number greater than zero, got {distance_km}")
+        raise ValueError(
+            f"distance must be a finite number greater than zero, got {distance_km}"
+        )
     if not math.isfinite(duration_s) or duration_s <= 0:
         raise ValueError(f"duration must be greater than zero, got {duration_s}")
 
@@ -142,9 +144,7 @@ def parse_felt(text: str) -> int | None:
         ) from None
 
     if not FELT_MIN <= rating <= FELT_MAX:
-        raise ValueError(
-            f"felt must be from {FELT_MIN} to {FELT_MAX}, got {rating}"
-        )
+        raise ValueError(f"felt must be from {FELT_MIN} to {FELT_MAX}, got {rating}")
     return rating
 
 
