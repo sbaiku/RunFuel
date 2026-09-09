@@ -1,4 +1,5 @@
 # RunFuel
+[![CI](https://github.com/sbaiku/RunFuel-/actions/workflows/ci.yml/badge.svg)](https://github.com/sbaiku/RunFuel-/actions/workflows/ci.yml)
 
 A personal running log. Record a run's date, distance, and duration; RunFuel
 derives your pace and estimates calories burned.
