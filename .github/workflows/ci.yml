@@ -21,9 +21,12 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/runfuel
 
 jobs:
-  lint:
+  quality:
     runs-on: ubuntu-latest
 
+    # One checkout and one dependency install for every check. On this project
+    # the setup costs ~17s while the checks themselves run in under a second,
+    # so splitting them across jobs paid that cost three times over.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -40,56 +43,21 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
-      # Both checks are static and share one dependency install, so they live
-      # in the same job rather than paying for another runner.
       - name: Type check
         run: uv run mypy src
 
-  unit-tests:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          python-version: "3.13"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
+      # Coverage accumulates across both runs: without --cov-append the second
+      # pytest invocation overwrites .coverage and the unit run's data is lost,
+      # so the threshold would judge only part of the suite.
       - name: Unit tests
-        run: uv run pytest tests/unit --maxfail=1 -q
+        run: uv run pytest tests/unit --maxfail=1 -q --cov=src
 
-  integration-tests:
-    runs-on: ubuntu-latest
-    needs: [lint, unit-tests]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          python-version: "3.13"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      # The coverage gate lives here, not on the unit job: the unit tests alone
-      # reach 79% (measured) and would fail an 80% threshold, while these tests
-      # drive the whole stack through HTTP and reach 94%.
       - name: Integration tests
-        run: uv run pytest tests/integration --maxfail=1 -q --cov=src --cov-fail-under=80
+        run: uv run pytest tests/integration --maxfail=1 -q --cov=src --cov-append --cov-fail-under=80
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: integration-tests
+    needs: quality
 
     permissions:
       contents: read
@@ -117,8 +85,11 @@ jobs:
 
           SHORT_SHA=${GITHUB_SHA:0:7}
 
-          # Every build, on any branch, gets this unique immutable tag. Braces
-          # matter: in zsh "$IMAGE_NAME:latest" would parse ":l" as a modifier.
+          # Every build, on any branch, gets this unique immutable tag. The
+          # braces keep the reference unambiguous: zsh reads a letter straight
+          # after a colon as a modifier, so a literal tag like ":latest" would
+          # silently lose its ":l". Nothing here triggers it today, but the
+          # failure mode is invisible when it does.
           IMAGE="${IMAGE_NAME}:${VERSION}-${SHORT_SHA}"
           TAGS="$IMAGE"
 
