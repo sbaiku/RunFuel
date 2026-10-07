@@ -2,9 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:
+
   pull_request:
     branches:
       - main
+
   push:
     branches:
       - main
@@ -12,24 +14,31 @@ on:
 permissions:
   contents: read
 
+env:
+  # Deliberately not github.repository: that gives sbaiku/RunFuel-, and both
+  # the uppercase letters and the trailing hyphen are illegal in a Docker
+  # reference. Verified -- docker rejects it outright.
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/runfuel
+
 jobs:
   quality:
     runs-on: ubuntu-latest
 
+    # One checkout and one dependency install for every check. On this project
+    # the setup costs ~17s while the checks themselves run in under a second,
+    # so splitting them across jobs paid that cost three times over.
     steps:
-    # This step checks out a copy of your repository.
       - name: Checkout repository
         uses: actions/checkout@v7
 
-    # This step sets up Python 3.13 using the astral-sh/setup-uv action.
       - name: Setup uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.13"
           enable-cache: true
-    # This step installs the dependencies defined in your pyproject.toml file.
+
       - name: Install dependencies
-        run: uv sync --locked --dev
+        run: uv sync --locked
 
       - name: Lint
         run: uv run ruff check .
@@ -37,17 +46,25 @@ jobs:
       - name: Type check
         run: uv run mypy src
 
-      - name: Tests
-        run: uv run pytest --maxfail=1 --disable-warnings -q --cov=src --cov-fail-under=80
+      # Coverage accumulates across both runs: without --cov-append the second
+      # pytest invocation overwrites .coverage and the unit run's data is lost,
+      # so the threshold would judge only part of the suite.
+      - name: Unit tests
+        run: uv run pytest tests/unit --maxfail=1 -q --cov=src
 
+      - name: Integration tests
+        run: uv run pytest tests/integration --maxfail=1 -q --cov=src --cov-append --cov-fail-under=80
 
   docker-build:
     runs-on: ubuntu-latest
-    # Don't spend runner minutes building an image for a commit whose tests fail.
     needs: quality
 
     permissions:
       contents: read
+      # Required by the push step. Logging in is not sufficient on its own.
+      # Note: a pull request from a fork gets a read-only token regardless of
+      # this, so pushing from fork PRs is not possible.
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -56,40 +73,91 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # - name: Login to GHCR
-      #   if: github.event_name == 'push'
-      #   uses: docker/login-action@v4
-      #   with:
-      #     registry: ghcr.io
-      #     username: ${{ github.actor }}
-      #     password: ${{ secrets.GITHUB_TOKEN }}
+      # All tag naming lives here, in one place. A step is needed at all only
+      # because the version lives in a file, and ${{ }} cannot read files.
+      - name: Work out the image tags
+        id: meta
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          # Keep the failure loud: an empty VERSION would yield the tag
+          # "runfuel:" and only break later as an opaque reference error.
+          [ -n "$VERSION" ] || { echo "::error::could not read version from pyproject.toml"; exit 1; }
+
+          SHORT_SHA=${GITHUB_SHA:0:7}
+
+          # Every build, on any branch, gets this unique immutable tag. The
+          # braces keep the reference unambiguous: zsh reads a letter straight
+          # after a colon as a modifier, so a literal tag like ":latest" would
+          # silently lose its ":l". Nothing here triggers it today, but the
+          # failure mode is invisible when it does.
+          IMAGE="${IMAGE_NAME}:${VERSION}-${SHORT_SHA}"
+          TAGS="$IMAGE"
+
+          # main additionally gets the moving <version> tag, which is the thing
+          # a deployment follows. GITHUB_REF_NAME is GitHub's $BITBUCKET_BRANCH.
+          if [ "$GITHUB_REF_NAME" = "main" ]; then
+            TAGS=$(printf '%s\n%s' "$TAGS" "${IMAGE_NAME}:${VERSION}")
+          fi
+
+          echo "Tagging this build as:"
+          echo "$TAGS"
+
+          # The smoke test needs one concrete tag, and the unique one exists on
+          # every event, so it never depends on which branch this is.
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+          # A multi-line output needs the <<EOF form; echo "tags=..." would
+          # carry only the first line and the rest would vanish silently.
+          {
+            echo "tags<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: false
+          # Load locally only. Publishing happens after the smoke test.
           load: true
-          tags: runfuel:test
-          # To publish later, add the GHCR login step above and swap to:
-          # push: ${{ github.event_name == 'push' }}
-          # tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # A build proving the image compiles says nothing about whether it runs.
       # This catches a broken CMD, a missing runtime dep, or an unwritable /data.
-      - name: Smoke test the container
+      - name: Smoke test
         run: |
-          docker run -d --name runfuel-ci -p 8000:8000 runfuel:test
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8000/health; then
-              echo "container is healthy"; exit 0
+          docker run -d \
+            --name app-ci \
+            -p 8000:8000 \
+            ${{ steps.meta.outputs.image }}
+
+          for i in $(seq 1 5); do
+            if curl -sf http://localhost:8000/health; then
+              echo "container is healthy"
+              exit 0
             fi
-            sleep 1
+
+            sleep 2
           done
+
           echo "::error::container never became healthy"
-          docker logs runfuel-ci
+          docker logs app-ci
           exit 1
 
       - name: Container logs on failure
         if: failure()
-        run: docker logs runfuel-ci || true
+        run: docker logs app-ci || true
+
+      # Not gated on the event: a pull request must publish its
+      # <version>-<sha> image too, or that tag would exist only on the runner.
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        run: docker push --all-tags "$IMAGE_NAME"
